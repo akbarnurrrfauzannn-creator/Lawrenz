@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bunga Teks Berjatuhan</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #07080d; overflow: hidden; }
+  canvas { display: block; width: 100%; height: 100%; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+const CHARS = "Who'scare?";
+const rand = (a, b) => a + Math.random() * (b - a);
+
+let W, H, particles = [], rain = [], phase = "fall", holdUntil = 0, last = 0, FC = { x: 0, y: 0 }, flash = 0;
+
+// Apakah titik (x,y) masuk bentuk bunga? Mengembalikan warna atau null.
+function flowerColor(x, y, cx, cy, R, stemBottom) {
+  // Mode penuh layar: setiap titik terisi teks, warna gradasi pink-ungu-biru
+  return `hsl(${300 + (x / W) * 70 + rand(-8, 8)},90%,${62 + rand(-8, 8)}%)`;
+  const dx = x - cx, dy = y - cy;
+  const r = Math.hypot(dx, dy);
+  const a = Math.atan2(dy, dx);
+
+  // Putik (tengah)
+  if (r < R * 0.2) return `hsl(${rand(40, 52)},100%,${rand(55, 70)}%)`;
+
+  // Kelopak: kurva mawar 8 daun
+  const petal = R * Math.abs(Math.cos(4 * a));
+  if (r < petal && r > R * 0.2)
+    return `hsl(${330 + (r / R) * 25},${rand(80, 100)}%,${85 - (r / R) * 30}%)`;
+
+  // Batang
+  if (y > cy + R * 0.2 && y < stemBottom && Math.abs(dx) < R * 0.045)
+    return `hsl(125,70%,${rand(35, 50)}%)`;
+
+  // Daun kiri & kanan
+  for (const s of [-1, 1]) {
+    const lx = cx + s * R * 0.32, ly = cy + R * 1.35;
+    const ex = (x - lx) / (R * 0.3), ey = (y - ly) / (R * 0.12);
+    // elips dimiringkan
+    const t = s * 0.5;
+    const rx = ex * Math.cos(t) + ey * Math.sin(t);
+    const ry = -ex * Math.sin(t) + ey * Math.cos(t);
+    if (rx * rx + ry * ry < 1) return `hsl(135,65%,${rand(30, 45)}%)`;
+  }
+  return null;
+}
+
+function build() {
+  W = canvas.width = innerWidth * devicePixelRatio;
+  H = canvas.height = innerHeight * devicePixelRatio;
+  const dpr = devicePixelRatio;
+  const step = Math.max(11, Math.min(W, H) / 55);
+  const R = Math.min(W * 0.42, H * 0.3);
+  const cx = W / 2, cy = H * 0.34, stemBottom = cy + R * 1.9;
+  FC = { x: W / 2, y: H / 2 };
+
+  particles = [];
+  for (let x = step / 2; x < W; x += step) {
+    for (let y = step / 2; y < H; y += step) {
+      const col = flowerColor(x, y, cx, cy, R, stemBottom);
+      if (!col) continue;
+      particles.push({
+        x, ty: y, y: -rand(20, H * 0.6), vy: 0,
+        ch: CHARS[(Math.random() * CHARS.length) | 0],
+        col, delay: (1 - y / H) * 4500 + rand(0, 400), done: false, size: step * 1.05, leave: 0
+      });
+    }
+  }
+  rain = [];
+  for (let i = 0; i < W / (step * 1.6); i++)
+    rain.push({ x: rand(0, W), y: rand(-H, H), v: rand(1.5, 4) * dpr, ch: CHARS[(Math.random() * CHARS.length) | 0], size: step * 0.8 });
+  phase = "fall"; startTime = performance.now();
+}
+
+let startTime = 0;
+function frame(t) {
+  const dt = Math.min(32, t - last || 16); last = t;
+  const g = 0.0012 * H;           // gravitasi
+  ctx.fillStyle = "rgba(7,8,13,0.35)";
+  ctx.fillRect(0, 0, W, H);
+
+  // hujan teks latar redup
+  ctx.fillStyle = "rgba(90,200,140,0.18)";
+  for (const d of rain) {
+    d.y += d.v;
+    if (d.y > H) { d.y = -20; d.x = rand(0, W); d.ch = CHARS[(Math.random() * CHARS.length) | 0]; }
+    ctx.font = `${d.size}px monospace`;
+    ctx.fillText(d.ch, d.x, d.y);
+  }
+
+  let settled = 0;
+  const elapsed = t - startTime;
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+
+  for (const p of particles) {
+    if (phase === "fall") {
+      if (elapsed > p.delay && !p.done) {
+        p.vy += g * dt / 16;
+        p.y += p.vy * dt / 16;
+        if (p.y >= p.ty) {
+          p.y = p.ty; p.vy = -p.vy * 0.28;
+          if (Math.abs(p.vy) < H * 0.004) { p.done = true; p.vy = 0; }
+        }
+      }
+      if (p.done) settled++;
+    } else if (phase === "burst") {
+      const k = dt / 16;
+      p.vy += g * 0.35 * k;
+      p.x += p.vx * k; p.y += p.vy * k;
+      p.rot += p.vr * k;
+      p.life -= 0.012 * k;
+    }
+    if (p.y < -p.size * 3 || p.y > H + p.size * 3 || p.x < -p.size * 3 || p.x > W + p.size * 3) continue;
+    if (phase === "burst" && p.life <= 0) continue;
+
+    ctx.save();
+    ctx.globalAlpha = phase === "burst" ? Math.max(0, p.life) : 1;
+    let jx = 0, jy = 0;
+    if (phase === "hold") {   // bergetar makin kencang sebelum pecah
+      const power = 1 - (holdUntil - t) / 700;
+      const amp = Math.max(0, power) * p.size * 0.35;
+      jx = rand(-amp, amp); jy = rand(-amp, amp);
+    }
+    ctx.translate(p.x + jx, p.y + jy);
+    if (phase === "burst") ctx.rotate(p.rot);
+    ctx.shadowColor = p.col; ctx.shadowBlur = p.done && phase === "fall" ? 8 : 0;
+    ctx.fillStyle = p.col;
+    ctx.font = `bold ${p.size}px monospace`;
+    ctx.fillText(p.ch, 0, 0);
+    ctx.restore();
+  }
+
+  // kilatan putih saat pecah
+  if (flash > 0) {
+    ctx.fillStyle = `rgba(255,240,250,${flash * 0.85})`;
+    ctx.fillRect(0, 0, W, H);
+    flash -= 0.07 * dt / 16;
+  }
+
+  if (phase === "fall" && settled === particles.length) {
+    phase = "hold"; holdUntil = t + 700;   // getar singkat lalu pecah
+  } else if (phase === "hold" && t > holdUntil) {
+    phase = "burst"; flash = 1;
+    for (const p of particles) {
+      const a = Math.atan2(p.y - FC.y, p.x - FC.x) + rand(-0.4, 0.4);
+      const sp = rand(0.4, 1) * Math.min(W, H) * 0.03;
+      p.vx = Math.cos(a) * sp; p.vy = Math.sin(a) * sp - rand(0, sp * 0.4);
+      p.rot = 0; p.vr = rand(-0.25, 0.25); p.life = rand(0.7, 1.2);
+    }
+  } else if (phase === "burst" && particles.every(p => p.life <= 0 || p.y > H + p.size * 3)) {
+    build();
+  }
+  requestAnimationFrame(frame);
+}
+
+addEventListener("resize", build);
+canvas.addEventListener("click", build);   // ketuk untuk ulang
+build();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
